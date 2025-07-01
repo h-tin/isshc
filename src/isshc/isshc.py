@@ -2,15 +2,19 @@ import logging
 import re
 import select
 from datetime import datetime
-from typing import Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Self, Tuple
 
-import paramiko.config
-from paramiko import Channel, SSHClient
+from paramiko import Channel as _SSHChannel
+from paramiko import SSHClient
+from paramiko.config import SSH_PORT as _SSH_DEFAULT_PORT
 
 _logger = logging.getLogger(__name__)
 
 
-def _wait_recv_ready(channel: Channel, timeout: Optional[float] = None) -> bool:
+def _wait_recv_ready(
+    channel: _SSHChannel,
+    timeout: Optional[float] = None,
+) -> bool:
     (rlist, _, _) = select.select([channel], [], [], timeout)
     # False on timeout
     return bool(rlist)
@@ -30,12 +34,12 @@ def _find_pattern(patterns: Iterable[str], text: str) -> Optional[str]:
     return None
 
 
-class InteractiveSSHClient(SSHClient):
+class InteractiveSSHClient:
     """
     An SSH client specialized for interactive shell.
 
     Attributes:
-        auto_reply_patterns (Optional[Dict[str, str]]):
+        auto_replies (Optional[Dict[str, str]]):
             Dictionary of auto-reply patterns and texts
 
         encoding (str):
@@ -44,7 +48,7 @@ class InteractiveSSHClient(SSHClient):
         on_recv_partial_text (Optional[Callable[[str], None]]):
             Event handler called when partial text is received
 
-        prompt_patterns (Optional[List[str]]):
+        prompts (Optional[List[str]]):
             List of prompt patterns
 
         recv_nbytes (int):
@@ -54,6 +58,9 @@ class InteractiveSSHClient(SSHClient):
         recv_timeout (float):
             Maximum number of seconds to wait for a pattern to appear
             (default is 30)
+
+        sshc (paramiko.SSHClient):
+            SSHClient in paramiko
     """
 
     def __init__(self) -> None:
@@ -67,10 +74,21 @@ class InteractiveSSHClient(SSHClient):
         self.prompts: Optional[List[str]] = None
         self.recv_nbytes: int = 1024
         self.recv_timeout: float = 30.0
-        self._session: Optional[Channel] = None
+        self._session: Optional[_SSHChannel] = None
+        self._sshc: SSHClient = SSHClient()
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        self.close_shell()
+
+    @property
+    def sshc(self) -> SSHClient:
+        return self._sshc
 
     def _close_connection(self) -> None:
-        self.close()
+        self._sshc.close()
         _logger.info("Connection closed.")
 
     def _close_session(self) -> None:
@@ -82,9 +100,9 @@ class InteractiveSSHClient(SSHClient):
 
     def _open_connection(self, hostname: str, **kwargs) -> None:
         try:
-            port = kwargs.get("port", paramiko.config.SSH_PORT)
+            port = kwargs.get("port", _SSH_DEFAULT_PORT)
             _logger.debug(f"Connecting to {hostname}:{port}.")
-            self.connect(hostname, **kwargs)
+            self._sshc.connect(hostname, **kwargs)
             _logger.info(f"Successfully connected to {hostname}:{port}.")
         except Exception:
             _logger.exception(f"Failed to connect to {hostname}:{port}.")
@@ -93,7 +111,7 @@ class InteractiveSSHClient(SSHClient):
     def _open_session(self) -> None:
         try:
             _logger.debug("Opening an interactive shell.")
-            transport = self.get_transport()
+            transport = self._sshc.get_transport()
             assert transport is not None
             self._session = transport.open_session()
             self._session.get_pty()
@@ -130,10 +148,10 @@ class InteractiveSSHClient(SSHClient):
         Receive text from the interactive shell.
 
         Args:
-            auto_reply_patterns (Dict[str, str]):
+            auto_replies (Dict[str, str]):
                 Dictionary of auto-reply patterns and texts
 
-            prompt_patterns (List[str]):
+            prompts (List[str]):
                 List of prompt patterns
 
         Returns:

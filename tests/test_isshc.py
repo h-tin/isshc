@@ -2,6 +2,7 @@ import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from isshc import InteractiveSSHClient
 from isshc.isshc import _find_pattern, _try_decode, _wait_recv_ready
 
@@ -85,13 +86,13 @@ def test_open_connection_failure(mock_connect):
 
 
 # --- Test for InteractiveSSHClient._open_session() --- #
-@patch("isshc.InteractiveSSHClient.get_transport")
+@patch("paramiko.SSHClient.get_transport")
 def test_open_session_success(mock_transport):
     mock_session = MagicMock()
     mock_transport.return_value.open_session.return_value = mock_session
 
     with InteractiveSSHClient() as client:
-        client.get_transport = mock_transport
+        client._sshc.get_transport = mock_transport
         client._session = None
         client._open_session()
 
@@ -100,14 +101,14 @@ def test_open_session_success(mock_transport):
         mock_session.invoke_shell.assert_called_once()
 
 
-@patch("isshc.InteractiveSSHClient.get_transport", return_value=None)
+@patch("paramiko.SSHClient.get_transport", return_value=None)
 def test_open_session_no_transport(mock_transport):
     with InteractiveSSHClient() as client:
         with pytest.raises(AssertionError):
             client._open_session()
 
 
-@patch("isshc.InteractiveSSHClient.get_transport")
+@patch("paramiko.SSHClient.get_transport")
 def test_open_session_failure(mock_transport):
     mock_transport.side_effect = Exception("session failed")
     with InteractiveSSHClient() as client:
